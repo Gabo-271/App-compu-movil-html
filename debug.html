@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug VoteApp</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .log { margin: 5px 0; padding: 5px; background: #f5f5f5; border-radius: 3px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        .info { background: #e3f2fd; color: #1565c0; }
+    </style>
+</head>
+<body>
+    <h1>VoteApp Debug Console</h1>
+    <p>Logs de la consola del navegador:</p>
+    <div id="logs"></div>
+    
+    <script>
+        // Interceptar console.log
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            
+            const logDiv = document.createElement('div');
+            logDiv.className = 'log info';
+            logDiv.textContent = new Date().toLocaleTimeString() + ' - ' + args.join(' ');
+            document.getElementById('logs').appendChild(logDiv);
+            
+            // Auto scroll
+            logDiv.scrollIntoView();
+        };
+        
+        // Interceptar errores
+        window.addEventListener('error', function(e) {
+            const logDiv = document.createElement('div');
+            logDiv.className = 'log error';
+            logDiv.textContent = new Date().toLocaleTimeString() + ' - ERROR: ' + e.message;
+            document.getElementById('logs').appendChild(logDiv);
+        });
+        
+        console.log('Debug console iniciada');
+        
+        // Abrir la app en un iframe
+        setTimeout(() => {
+            const iframe = document.createElement('iframe');
+            iframe.src = 'http://localhost:3000';
+            iframe.style.width = '100%';
+            iframe.style.height = '600px';
+            iframe.style.border = '1px solid #ccc';
+            iframe.style.marginTop = '20px';
+            document.body.appendChild(iframe);
+        }, 1000);
+    </script>
+</body>
+</html>
