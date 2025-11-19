@@ -13,29 +13,24 @@ export function LoginScreen() {
   const isDemo = !isFirebaseConfigured();
 
   const handleGoogleLogin = async (useRedirect = false) => {
-    console.log('🔐 LoginScreen - Iniciando login...', useRedirect ? '(redirect)' : '(popup)');
+    console.log('🔐 LoginScreen - Iniciando login híbrido...', useRedirect ? '(redirect)' : '(popup)');
     setIsSigningIn(true);
     setShowPopupError(false);
     
     try {
       console.log('🔐 LoginScreen - Llamando a login()...');
       await login(useRedirect);
-      console.log('🔐 LoginScreen - Login exitoso!');
+      console.log('🔐 LoginScreen - Login híbrido exitoso!');
     } catch (error: any) {
       console.log('❌ LoginScreen - Error en login:', error);
       
       if (error.message === 'popup-blocked') {
         setShowPopupError(true);
         setError(null); // Limpiar error general
-      } else if (error.message === 'redirect-in-progress') {
-        // El redirect está en progreso, mostrar mensaje informativo
-        setError('Abriendo página de Google para autenticación...');
-        // No finalizar el loading porque el usuario estará en otra página
-        setTimeout(() => {
-          setIsSigningIn(false);
-          setError(null);
-        }, 3000);
-        return; // No ejecutar finally
+      } else if (error.message?.includes('canceled')) {
+        setError('Autenticación cancelada. Intenta nuevamente.');
+      } else if (error.message?.includes('network')) {
+        setError('Error de conexión. Verifica tu internet.');
       } else {
         setError('Error al iniciar sesión. Intenta nuevamente.');
       }
@@ -102,7 +97,7 @@ export function LoginScreen() {
               <p className="text-sm text-muted-foreground">
                 {isDemo 
                   ? 'Explora la app con datos de ejemplo. Configura Firebase para funcionalidad completa.'
-                  : 'Accede con tu cuenta de Google para participar en las votaciones'
+                  : 'Accede con tu cuenta de Google y obtén acceso completo a las encuestas'
                 }
               </p>
             </div>
@@ -126,7 +121,7 @@ export function LoginScreen() {
                     <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
                   </svg>
                 )}
-                {isSigningIn ? 'Iniciando...' : isDemo ? 'Explorar Demo' : 'Continuar con Google'}
+                {isSigningIn ? 'Autenticando...' : isDemo ? 'Explorar Demo' : 'Continuar con Google'}
               </div>
             </Button>
 
@@ -153,7 +148,7 @@ export function LoginScreen() {
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {isDemo 
                   ? 'Modo demo con datos de ejemplo. Para autenticación real, configura Firebase según FIREBASE_SETUP.md'
-                  : 'Al continuar, aceptas nuestros términos de servicio y política de privacidad'
+                  : 'Al continuar, te autenticarás con Google y obtendrás acceso a las encuestas reales'
                 }
               </p>
             </div>
