@@ -39,14 +39,18 @@ try {
   // Initialize Cloud Firestore
   db = getFirestore(app);
   
+  console.log('🔥 Firebase inicializado correctamente');
+  
   if (!isFirebaseConfigured()) {
     console.warn('🔥 Firebase no está configurado correctamente. Usando datos mock.');
     console.warn('📖 Consulta FIREBASE_SETUP.md para configurar Firebase.');
+  } else {
+    console.log('✅ Firebase configurado correctamente');
   }
 } catch (error) {
   console.error('❌ Error inicializando Firebase:', error);
   console.warn('📖 Consulta FIREBASE_SETUP.md para configurar Firebase correctamente.');
 }
 
-export { auth, googleProvider, db, isFirebaseConfigured };
+export { app, auth, googleProvider, db, isFirebaseConfigured };
 export default app;

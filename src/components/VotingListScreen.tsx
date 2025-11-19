@@ -5,7 +5,10 @@ import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar';
 import { useVoteApp, getCategoryColor } from './VoteAppContext';
-import { Search, Filter, Calendar, Users, ChevronRight, Moon, Sun, Building2, Hammer, Bus, GraduationCap, Heart, Briefcase } from 'lucide-react';
+import { CreatePollDialog } from './CreatePollDialog';
+import { PollResultsDialog } from './PollResultsDialog';
+import { ApiTestDialog } from './ApiTestDialog';
+import { Search, Filter, Calendar, Users, ChevronRight, Moon, Sun, Building2, Hammer, Bus, GraduationCap, Heart, Briefcase, Plus, BarChart3, Settings } from 'lucide-react';
 
 const categories = ['Todos', 'Gobierno', 'Desarrollo', 'Transporte', 'Educación', 'Salud', 'Economía'];
 
@@ -33,6 +36,9 @@ export function VotingListScreen() {
   } = useVoteApp();
   
   const [showFilters, setShowFilters] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [selectedVoteForResults, setSelectedVoteForResults] = useState<any>(null);
+  const [showApiTestDialog, setShowApiTestDialog] = useState(false);
 
   const filteredVotes = state.votes.filter(vote => {
     const matchesSearch = vote.title.toLowerCase().includes(state.searchQuery.toLowerCase()) ||
@@ -68,6 +74,25 @@ export function VotingListScreen() {
           </div>
           
           <div className="flex items-center gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowCreateDialog(true)}
+              className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-sm"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Crear</span>
+            </Button>
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowApiTestDialog(true)}
+              className="border-orange-200 text-orange-600 hover:bg-orange-50"
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+            
             <Button
               variant="ghost"
               size="sm"
@@ -110,6 +135,33 @@ export function VotingListScreen() {
               <Filter className="w-4 h-4" />
             </Button>
           </div>
+          
+          {/* API Status indicator */}
+          {state.dataSource && (
+            <div className="mt-3 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${
+                  state.dataSource === 'api' ? 'bg-green-500' : 'bg-orange-500'
+                }`} />
+                <span className="text-muted-foreground">
+                  {state.dataSource === 'api' 
+                    ? 'Datos de Sebastian.cl' 
+                    : 'Datos de ejemplo (API no disponible)'
+                  }
+                </span>
+              </div>
+              {state.dataSource === 'mock' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowApiTestDialog(true)}
+                  className="h-auto py-1 px-2 text-xs text-orange-600 hover:bg-orange-50"
+                >
+                  Configurar API
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Filters */}
@@ -198,9 +250,24 @@ export function VotingListScreen() {
                         </div>
                       </div>
 
-                      <div className={`inline-flex items-center gap-2 px-2 py-1 rounded-full text-xs ${colors.bg} ${colors.text} ${colors.border} border`}>
-                        <Icon className="w-3 h-3" />
-                        <span>{vote.category}</span>
+                      <div className="flex items-center justify-between">
+                        <div className={`inline-flex items-center gap-2 px-2 py-1 rounded-full text-xs ${colors.bg} ${colors.text} ${colors.border} border`}>
+                          <Icon className="w-3 h-3" />
+                          <span>{vote.category}</span>
+                        </div>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedVoteForResults(vote);
+                          }}
+                          className="h-7 px-2 text-xs"
+                        >
+                          <BarChart3 className="w-3 h-3 mr-1" />
+                          Resultados
+                        </Button>
                       </div>
                     </div>
                     
@@ -239,6 +306,24 @@ export function VotingListScreen() {
           </Button>
         </div>
       </div>
+
+      {/* Create Poll Dialog */}
+      {showCreateDialog && (
+        <CreatePollDialog onClose={() => setShowCreateDialog(false)} />
+      )}
+      
+      {/* Poll Results Dialog */}
+      {selectedVoteForResults && (
+        <PollResultsDialog 
+          vote={selectedVoteForResults}
+          onClose={() => setSelectedVoteForResults(null)}
+        />
+      )}
+      
+      {/* API Test Dialog */}
+      {showApiTestDialog && (
+        <ApiTestDialog onClose={() => setShowApiTestDialog(false)} />
+      )}
     </div>
   );
 }
