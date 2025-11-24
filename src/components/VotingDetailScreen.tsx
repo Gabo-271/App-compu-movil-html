@@ -31,15 +31,44 @@ export function VotingDetailScreen() {
   const userHasVoted = vote.userVotes && Array.isArray(vote.userVotes) && vote.userVotes.length > 0;
 
   const handleVoteSubmit = async () => {
+    console.log('🖱️ [VOTE_DETAIL] Iniciando proceso de votación...');
+    console.log('🎯 [VOTE_DETAIL] selectedOption:', selectedOption);
+    console.log('📊 [VOTE_DETAIL] vote completo:', vote);
+    console.log('🆔 [VOTE_DETAIL] vote.id (token):', vote.id);
+    console.log('👤 [VOTE_DETAIL] userHasVoted:', userHasVoted);
+    console.log('✅ [VOTE_DETAIL] Verificando condiciones...');
+    
     if (selectedOption && !userHasVoted) {
       try {
+        console.log('🖱️ [VOTE_DETAIL] Todas las condiciones pasaron, procediendo...');
+        
         setHasVoted(true);
+        console.log('⏳ [VOTE_DETAIL] Llamando submitVote con parámetros:');
+        console.log('  - voteId (token):', vote.id);
+        console.log('  - optionId (selection):', selectedOption);
+        
         await submitVote(vote.id, selectedOption);
+        
+        console.log('✅ [VOTE_DETAIL] submitVote completado, mostrando success');
         showSuccess();
       } catch (error) {
+        console.error('❌ [VOTE_DETAIL] Error al enviar voto:', error);
         setHasVoted(false);
-        console.error('Error al enviar voto:', error);
-        // Aquí podrías mostrar un toast o mensaje de error
+        
+        // Mostrar error visual al usuario
+        alert(`Error al votar: ${error.message || 'Error desconocido'}`);
+      }
+    } else {
+      console.warn('⚠️ [VOTE_DETAIL] No se puede votar, verificando razones:');
+      console.warn('  - selectedOption existe:', !!selectedOption);
+      console.warn('  - selectedOption valor:', selectedOption);
+      console.warn('  - userHasVoted:', userHasVoted);
+      console.warn('  - Puede votar:', selectedOption && !userHasVoted);
+      
+      if (!selectedOption) {
+        alert('Por favor selecciona una opción antes de votar');
+      } else if (userHasVoted) {
+        alert('Ya has votado en esta encuesta');
       }
     }
   };

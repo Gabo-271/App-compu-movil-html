@@ -1,33 +1,61 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
-import { getVotes, submitVote as firebaseSubmitVote, getUserVotes, initializeSampleData } from '../lib/firestore';
-import { isFirebaseConfigured } from '../lib/firebase';
-import type { User, Vote, VoteOption, UserVote } from '../lib/firestore';
+import { 
+  signInWithPopup, 
+  signInWithRedirect, 
+  GoogleAuthProvider, 
+  getAuth, 
+  onAuthStateChanged,
+  User as FirebaseUser,
+  getRedirectResult
+} from 'firebase/auth';
+import app from '../lib/firebase';
 
-// Importación de funciones de API como funciones dinámicas para evitar problemas de módulo
-const fetchVotesFromApi = async (): Promise<Vote[]> => {
-  try {
-    const { fetchVotesFromApi: apiFunction } = await import('../lib/api');
-    return await apiFunction();
-  } catch (error) {
-    console.error('Error importando API:', error);
-    throw error;
-  }
-};
+// ======================================================
+// INTERFACES
+// ======================================================
 
-const checkApiAvailability = async (): Promise<boolean> => {
-  try {
-    const { checkApiAvailability: apiFunction } = await import('../lib/api');
-    return await apiFunction();
-  } catch (error) {
-    console.error('Error verificando API:', error);
-    return false;
-  }
-};
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  photoUrl: string;
+  firebaseUid: string;
+  googleAccessToken?: string; // Almacenar el access token de Google
+  googleIdToken?: string; // Almacenar el ID token de Google (lo que necesita Sebastian.cl)
+}
+
+interface VoteOption {
+  id: string;
+  text: string;
+  votes: number;
+}
+
+interface Vote {
+  id: string;
+  title: string;
+  shortDescription: string;
+  longDescription: string;
+  description: string; // Campo adicional para descripción
+  options: VoteOption[];
+  startDate: Date;
+  endDate: Date;
+  category: string;
+  status: 'active' | 'closed';
+  createdBy: string;
+  imageUrl?: string;
+}
+
+interface UserVote {
+  id: string;
+  userId: string;
+  voteId: string;
+  selectedOptionId: string;
+  timestamp: Date;
+}
 
 interface VoteAppState {
   user: User | null;
-  currentScreen: 'home' | 'login' | 'voting-list' | 'voting-detail' | 'profile' | 'loading' | 'empty' | 'success' | 'error';
+  currentScreen: 'home' | 'login' | 'voting-list' | 'voting-detail' | 'profile' | 'loading' | 'empty' | 'success' | 'error' | 'poll-management';
   selectedVote: Vote | null;
   votes: Vote[];
   userVotes: UserVote[];
@@ -36,8 +64,7 @@ interface VoteAppState {
   isDarkMode: boolean;
   searchQuery: string;
   selectedCategory: string;
-  dataSource: 'api' | 'firebase' | 'mock';
-  apiStatus: 'checking' | 'available' | 'unavailable' | 'error';
+  dataSource: 'api' | 'loading';
 }
 
 interface VoteAppContextType {
@@ -52,373 +79,680 @@ interface VoteAppContextType {
   setSelectedCategory: (category: string) => void;
   submitVote: (voteId: string, optionId: string) => Promise<void>;
   showSuccess: () => void;
-  loadVotes: () => Promise<void>;
+  loadVotings: (user?: User) => Promise<void>;
+  // Nuevas funciones para gestión de encuestas
+  createPoll: (pollData: { name: string; options: { selection: number; choice: string; }[]; token?: string; }) => Promise<any>;
+  updatePoll: (pollData: { token: string; name: string; active: boolean; options: { selection: number; choice: string; }[]; }) => Promise<any>;
+  getPollDetails: (pollToken: string) => Promise<any>;
+  deletePoll: (pollToken: string) => Promise<any>;
 }
+
+// ======================================================
+// FIREBASE CONFIGURATION
+// ======================================================
+
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('profile');
+googleProvider.addScope('email');
+googleProvider.addScope('openid');
+googleProvider.addScope('https://www.googleapis.com/auth/userinfo.profile');
+googleProvider.addScope('https://www.googleapis.com/auth/userinfo.email');
+
+// Forzar obtención de ID Token de Google
+googleProvider.setCustomParameters({
+  'access_type': 'offline',
+  'prompt': 'consent'
+});
+
+// ======================================================
+// CONTEXT
+// ======================================================
 
 const VoteAppContext = createContext<VoteAppContextType | undefined>(undefined);
 
-// Datos mock para modo demo
-const mockVotes: Vote[] = [
-  {
-    id: '1',
-    title: 'Presupuesto Municipal 2024',
-    description: 'Votación para decidir la distribución del presupuesto municipal del próximo año. Se evaluarán propuestas para mejoras en infraestructura, educación, salud y servicios públicos.',
-    shortDescription: 'Distribución del presupuesto municipal para el próximo año',
-    status: 'active',
-    startDate: new Date('2024-01-15'),
-    endDate: new Date('2024-02-15'),
-    category: 'Gobierno',
-    options: [
-      { id: '1a', text: 'Priorizar infraestructura vial', votes: 45 },
-      { id: '1b', text: 'Invertir en educación pública', votes: 62 },
-      { id: '1c', text: 'Mejorar servicios de salud', votes: 38 },
-      { id: '1d', text: 'Fortalecer seguridad ciudadana', votes: 29 }
-    ],
-    createdBy: 'system',
-    createdAt: new Date('2024-01-01'),
-    totalVotes: 174,
-    userVotes: {}
-  },
-  {
-    id: '2',
-    title: 'Nuevo Parque Recreativo',
-    description: 'Propuesta para la construcción de un nuevo parque recreativo en el sector norte de la ciudad.',
-    shortDescription: 'Construcción de parque recreativo en sector norte',
-    status: 'active',
-    startDate: new Date('2024-01-10'),
-    endDate: new Date('2024-01-30'),
-    category: 'Desarrollo',
-    options: [
-      { id: '2a', text: 'Aprobar construcción del parque', votes: 78 },
-      { id: '2b', text: 'Rechazar la propuesta', votes: 22 }
-    ],
-    createdBy: 'system',
-    createdAt: new Date('2024-01-05'),
-    totalVotes: 100,
-    userVotes: {}
-  },
-  {
-    id: '3',
-    title: 'Sistema de Educación Digital',
-    description: 'Implementación de plataforma digital para la educación pública.',
-    shortDescription: 'Plataforma digital para educación pública',
-    status: 'active',
-    startDate: new Date('2024-01-20'),
-    endDate: new Date('2024-02-20'),
-    category: 'Educación',
-    options: [
-      { id: '3a', text: 'Implementar plataforma completa', votes: 89 },
-      { id: '3b', text: 'Fase piloto en 5 escuelas', votes: 112 },
-      { id: '3c', text: 'Posponer implementación', votes: 34 }
-    ],
-    createdBy: 'system',
-    createdAt: new Date('2024-01-10'),
-    totalVotes: 235,
-    userVotes: {}
-  }
-];
-// Función para obtener colores por categoría
-export const getCategoryColor = (category: string) => {
-  const colors: Record<string, { bg: string; text: string; border: string; icon: string }> = {
-    'Gobierno': { bg: 'bg-indigo-100 dark:bg-indigo-900/30', text: 'text-indigo-700 dark:text-indigo-300', border: 'border-indigo-200 dark:border-indigo-700', icon: 'text-indigo-600 dark:text-indigo-400' },
-    'Desarrollo': { bg: 'bg-teal-100 dark:bg-teal-900/30', text: 'text-teal-700 dark:text-teal-300', border: 'border-teal-200 dark:border-teal-700', icon: 'text-teal-600 dark:text-teal-400' },
-    'Transporte': { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300', border: 'border-orange-200 dark:border-orange-700', icon: 'text-orange-600 dark:text-orange-400' },
-    'Educación': { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-200 dark:border-purple-700', icon: 'text-purple-600 dark:text-purple-400' },
-    'Salud': { bg: 'bg-rose-100 dark:bg-rose-900/30', text: 'text-rose-700 dark:text-rose-300', border: 'border-rose-200 dark:border-rose-700', icon: 'text-rose-600 dark:text-rose-400' },
-    'Economía': { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300', border: 'border-emerald-200 dark:border-emerald-700', icon: 'text-emerald-600 dark:text-emerald-400' },
-    'Todos': { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-700 dark:text-slate-300', border: 'border-slate-200 dark:border-slate-600', icon: 'text-slate-600 dark:text-slate-400' }
-  };
-  return colors[category] || colors['Todos'];
-};
-
 export function VoteAppProvider({ children }: { children: ReactNode }) {
-  const firebaseAuth = useFirebaseAuth();
-  
-  console.log('🔧 VoteAppProvider - Firebase Auth Estado:');
-  console.log('   User:', firebaseAuth.user);
-  console.log('   Loading:', firebaseAuth.isLoading);
-  console.log('   Error:', firebaseAuth.error);
-  console.log('   Firebase configurado:', isFirebaseConfigured());
-  
   const [state, setState] = useState<VoteAppState>({
     user: null,
-    currentScreen: 'loading', // Siempre empezar con loading
+    currentScreen: 'loading',
     selectedVote: null,
     votes: [],
     userVotes: [],
-    isLoading: true, // Siempre empezar cargando
+    isLoading: true,
     error: null,
     isDarkMode: false,
     searchQuery: '',
     selectedCategory: 'Todos',
-    dataSource: 'mock', // Por defecto mock
-    apiStatus: 'checking' // Verificando API al inicio
+    dataSource: 'loading'
   });
 
-  // Cargar votos cuando el usuario se autentica
-  useEffect(() => {
-    if (firebaseAuth.user && !firebaseAuth.isLoading) {
-      console.log('📄 Usuario autenticado, cargando votos...');
-      
-      if (isFirebaseConfigured()) {
-        loadVotes();
-        loadUserVotes();
-      } else {
-        // Modo demo: usar datos mock
-        console.log('🎭 Modo demo: usando votos mock');
-        setState(prev => ({
-          ...prev,
-          votes: mockVotes,
-          userVotes: [],
-          isLoading: false
-        }));
-      }
-    }
-  }, [firebaseAuth.user, firebaseAuth.isLoading]);
+  // ======================================================
+  // FIREBASE AUTH FUNCTIONS
+  // ======================================================
 
-  // Red de seguridad adicional - timeout en VoteAppContext
-  useEffect(() => {
-    const emergencyTimeout = setTimeout(() => {
-      console.warn('🚨 TIMEOUT EMERGENCIA - Forzando navegación después de 2 segundos');
-      setState(prev => {
-        if (prev.isLoading) {
-          return {
-            ...prev,
-            isLoading: false,
-            currentScreen: 'login',
-            user: null
-          };
-        }
-        return prev;
-      });
-    }, 2000);
-
-    return () => clearTimeout(emergencyTimeout);
-  }, []); // Solo ejecutar una vez al montar
-
-  // Sincronizar user de Firebase con state local
-  useEffect(() => {
-    console.log('🔄 VoteAppContext - Estado Firebase cambió:');
-    console.log('   User:', firebaseAuth.user);
-    console.log('   Loading:', firebaseAuth.isLoading);
-    console.log('   Error:', firebaseAuth.error);
-    
-    // Lógica simplificada de navegación
-    if (firebaseAuth.isLoading && !firebaseAuth.user) {
-      // Todavía cargando autenticación Y no hay usuario
-      setState(prev => ({
-        ...prev,
-        isLoading: true,
-        currentScreen: 'loading',
-        error: firebaseAuth.error
-      }));
-    } else if (firebaseAuth.user) {
-      // Usuario autenticado, ir a la lista de votos
-      console.log('   ✅ Usuario autenticado, navegando a voting-list');
-      setState(prev => ({
-        ...prev,
-        user: firebaseAuth.user,
-        isLoading: false, // SIEMPRE false cuando hay usuario
-        currentScreen: 'voting-list',
-        error: firebaseAuth.error
-      }));
-    } else {
-      // No hay usuario, ir a login
-      console.log('   ❌ No hay usuario, navegando a login');
-      setState(prev => ({
-        ...prev,
-        user: null,
-        isLoading: false,
-        currentScreen: 'login',
-        error: firebaseAuth.error
-      }));
-    }
-  }, [firebaseAuth.user, firebaseAuth.isLoading, firebaseAuth.error]);
-
-  // Cargar votos cuando el usuario se autentica
-  useEffect(() => {
-    if (firebaseAuth.user) {
-      if (isFirebaseConfigured()) {
-        loadVotes();
-        loadUserVotes();
-      } else {
-        // Modo demo: usar datos mock
-        setState(prev => ({
-          ...prev,
-          votes: mockVotes,
-          userVotes: [],
-          isLoading: false
-        }));
-      }
-    }
-  }, [firebaseAuth.user]);
-
-  // Inicializar datos de ejemplo en primera carga (solo si Firebase está configurado)
-  useEffect(() => {
-    if (isFirebaseConfigured()) {
-      const initData = async () => {
-        try {
-          await initializeSampleData();
-        } catch (error) {
-          console.error('Error inicializando datos:', error);
-        }
-      };
-      initData();
-    }
-  }, []);
-
-  const loadVotes = async () => {
-    console.log('🚀 [VOTE CONTEXT] === INICIANDO CARGA DE VOTACIONES ===');
-    console.log('📊 [VOTE CONTEXT] Estado actual:');
-    console.log('  - Fuente de datos:', state.dataSource);
-    console.log('  - Estado API:', state.apiStatus);
-    console.log('  - Usuario autenticado:', !!firebaseAuth.user);
-    console.log('  - Firebase configurado:', isFirebaseConfigured());
+  const signInWithGoogle = async (useRedirect = true): Promise<User> => {
+    console.log('🔐 [FIREBASE] Iniciando autenticación con Google...');
     
     try {
-      setLoading(true);
-      console.log('⏳ [VOTE CONTEXT] Iniciando proceso de carga...');
+      let result;
       
-      // Prioridad 1: Intentar cargar desde API
-      if (state.dataSource === 'api' || state.dataSource === 'firebase') {
-        console.log('🌐 [VOTE CONTEXT] === INTENTANDO CARGA DESDE API ===');
-        
+      if (useRedirect) {
+        console.log('🔄 [FIREBASE] Usando redirect...');
+        await signInWithRedirect(auth, googleProvider);
+        // El resultado se obtiene después del redirect
+        return new Promise((resolve, reject) => {
+          const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+              unsubscribe();
+              try {
+                // En redirect, no tenemos acceso fácil al Google token
+                const appUser = await createUserFromFirebase(user);
+                resolve(appUser);
+              } catch (error) {
+                reject(error);
+              }
+            }
+          });
+        });
+      } else {
+        console.log('🪟 [FIREBASE] Usando popup...');
         try {
-          console.log('🔍 [VOTE CONTEXT] Verificando disponibilidad de API...');
-          const isApiReady = await checkApiAvailability();
-          console.log('📡 [VOTE CONTEXT] Resultado verificación API:', isApiReady);
+          result = await signInWithPopup(auth, googleProvider);
           
-          if (isApiReady) {
-            console.log('✅ [VOTE CONTEXT] API disponible - Cargando votaciones...');
-            const apiVotes = await fetchVotesFromApi();
-            console.log('📊 [VOTE CONTEXT] Votaciones recibidas de API:', apiVotes.length);
-            console.log('📋 [VOTE CONTEXT] Resumen votaciones:', apiVotes.map(v => ({ id: v.id, title: v.title.substring(0, 30) + '...' })));
-            
-            // Mapear votos y verificar si el usuario ya votó
-            const votesWithUserVotes = apiVotes.map(vote => ({
-              ...vote,
-              userVote: vote.userVotes && firebaseAuth.user ? vote.userVotes[firebaseAuth.user.id] : undefined
-            }));
-            
-            setState(prev => ({
-              ...prev,
-              votes: votesWithUserVotes,
-              dataSource: 'api' as const,
-              apiStatus: 'available' as const,
-              isLoading: false
-            }));
-            
-            console.log('🎯 [VOTE CONTEXT] === CARGA DESDE API COMPLETADA EXITOSAMENTE ===');
-            return;
-            
-          } else {
-            console.log('⚠️ [VOTE CONTEXT] API no disponible - Intentando Firebase...');
-            setState(prev => ({ ...prev, apiStatus: 'unavailable' as const }));
+          if (!result?.user) {
+            throw new Error('No se pudo obtener información del usuario');
           }
           
-        } catch (apiError) {
-          console.error('❌ [VOTE CONTEXT] Error cargando desde API:', apiError);
-          setState(prev => ({ ...prev, apiStatus: 'error' as const }));
+          // Obtener tokens de Google del resultado
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          const googleAccessToken = credential?.accessToken;
+          const googleIdToken = credential?.idToken; // Esto es lo que necesita Sebastian.cl
+          
+          const appUser = await createUserFromFirebase(result.user, googleAccessToken, googleIdToken);
+          
+          console.log('✅ [FIREBASE] Usuario autenticado:', appUser.name);
+          console.log('🔑 [FIREBASE] Google Access Token guardado:', googleAccessToken ? 'SÍ' : 'NO');
+          console.log('🆔 [FIREBASE] Google ID Token guardado:', googleIdToken ? 'SÍ' : 'NO');
+          
+          return appUser;
+        } catch (popupError) {
+          console.error('❌ [FIREBASE] Error con popup:', popupError);
+          throw popupError;
         }
       }
       
-      // Prioridad 2: Firebase fallback
-      if (isFirebaseConfigured() && (state.dataSource === 'firebase' || state.dataSource === 'api')) {
-        console.log('🔥 [VOTE CONTEXT] === INTENTANDO CARGA DESDE FIREBASE ===');
+      return appUser;
+      
+    } catch (error: any) {
+      console.error('❌ [FIREBASE] Error en autenticación:', error);
+      
+      if (error.code === 'auth/popup-blocked') {
+        throw new Error('popup-blocked');
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        throw new Error('Autenticación cancelada por el usuario');
+      } else if (error.code === 'auth/network-request-failed') {
+        throw new Error('Error de conexión. Verifica tu internet.');
+      }
+      
+      throw new Error(error.message || 'Error de autenticación');
+    }
+  };
+
+  const createUserFromFirebase = async (firebaseUser: FirebaseUser, googleAccessToken?: string, googleIdToken?: string): Promise<User> => {
+    return {
+      id: firebaseUser.uid,
+      name: firebaseUser.displayName || 'Usuario',
+      email: firebaseUser.email || '',
+      photoUrl: firebaseUser.photoURL || '',
+      firebaseUid: firebaseUser.uid,
+      googleAccessToken: googleAccessToken,
+      googleIdToken: googleIdToken
+    };
+  };
+
+  const checkExistingAuth = async (): Promise<User | null> => {
+    console.log('🔍 [FIREBASE] Verificando autenticación existente...');
+    
+    try {
+      // Verificar redirect result primero
+      const result = await getRedirectResult(auth);
+      if (result?.user) {
+        console.log('🔄 [FIREBASE] Usuario desde redirect encontrado');
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        const googleAccessToken = credential?.accessToken;
+        const googleIdToken = credential?.idToken;
+        const user = await createUserFromFirebase(result.user, googleAccessToken, googleIdToken);
+        return user;
+      }
+    } catch (error) {
+      console.warn('⚠️ [FIREBASE] Error verificando redirect:', error);
+    }
+    
+    // Verificar usuario actual
+    return new Promise((resolve) => {
+      const unsubscribe = onAuthStateChanged(auth, async (user) => {
+        unsubscribe();
+        if (user) {
+          console.log('👤 [FIREBASE] Usuario actual encontrado:', user.email);
+          try {
+            const appUser = await createUserFromFirebase(user); // Sin Google token en reconexión
+            resolve(appUser);
+          } catch (error) {
+            console.error('❌ [FIREBASE] Error creando usuario:', error);
+            resolve(null);
+          }
+        } else {
+          console.log('👤 [FIREBASE] No hay usuario autenticado');
+          resolve(null);
+        }
+      });
+    });
+  };
+
+  const signOutFirebase = async () => {
+    console.log('🚪 [FIREBASE] Cerrando sesión...');
+    await auth.signOut();
+  };
+
+  // ======================================================
+  // INITIALIZATION
+  // ======================================================
+
+  useEffect(() => {
+    const initializeAuth = async () => {
+      console.log('🚀 [AUTH] Inicializando autenticación...');
+      
+      try {
+        // Primero, verificar si hay un resultado de redirect pendiente
+        const redirectResult = await getRedirectResult(auth);
         
-        try {
-          console.log('🔥 [VOTE CONTEXT] Cargando votaciones desde Firebase...');
-          const firebaseVotes = await getVotes();
-          console.log('📊 [VOTE CONTEXT] Votaciones recibidas de Firebase:', firebaseVotes.length);
+        if (redirectResult?.user) {
+          console.log('🔄 [AUTH] Resultado de redirect encontrado');
           
-          // Mapear votos y verificar si el usuario ya votó
-          const votesWithUserVotes = firebaseVotes.map(vote => ({
-            ...vote,
-            userVote: vote.userVotes && firebaseAuth.user ? vote.userVotes[firebaseAuth.user.id] : undefined
-          }));
+          // Obtener tokens de Google del resultado de redirect
+          const credential = GoogleAuthProvider.credentialFromResult(redirectResult);
+          const googleAccessToken = credential?.accessToken;
+          const googleIdToken = credential?.idToken;
+          
+          const appUser = await createUserFromFirebase(redirectResult.user, googleAccessToken, googleIdToken);
+          
+          console.log('✅ [AUTH] Usuario autenticado vía redirect:', appUser.name);
+          console.log('🔑 [AUTH] Google Access Token:', googleAccessToken ? 'SÍ' : 'NO');
+          console.log('🆔 [AUTH] Google ID Token:', googleIdToken ? 'SÍ' : 'NO');
           
           setState(prev => ({
             ...prev,
-            votes: votesWithUserVotes,
-            dataSource: 'firebase' as const,
+            user: appUser,
+            currentScreen: 'voting-list',
             isLoading: false
           }));
           
-          console.log('🎯 [VOTE CONTEXT] === CARGA DESDE FIREBASE COMPLETADA ===');
+          // Cargar votaciones automáticamente
+          await loadVotings();
           return;
-          
-        } catch (firebaseError) {
-          console.error('❌ [VOTE CONTEXT] Error cargando desde Firebase:', firebaseError);
         }
+        
+        // Si no hay redirect, verificar usuario existente
+        const existingUser = await checkExistingAuth();
+        
+        if (existingUser) {
+          console.log('👤 [AUTH] Usuario existente encontrado:', existingUser.name);
+          setState(prev => ({
+            ...prev,
+            user: existingUser,
+            currentScreen: 'voting-list',
+            isLoading: false
+          }));
+          
+          // Cargar votaciones automáticamente
+          await loadVotings();
+        } else {
+          console.log('👤 [AUTH] No hay usuario autenticado');
+          setState(prev => ({
+            ...prev,
+            currentScreen: 'login',
+            isLoading: false
+          }));
+        }
+      } catch (error) {
+        console.error('❌ [AUTH] Error en inicialización:', error);
+        setState(prev => ({
+          ...prev,
+          currentScreen: 'login',
+          isLoading: false,
+          error: 'Error de inicialización'
+        }));
       }
-      
-      // Prioridad 3: Mock data (último recurso)
-      console.log('📝 [VOTE CONTEXT] === USANDO DATOS MOCK COMO FALLBACK ===');
-      console.log('📊 [VOTE CONTEXT] Votaciones mock cargadas:', mockVotes.length);
-      
-      setState(prev => ({
-        ...prev,
-        votes: mockVotes,
-        dataSource: 'mock' as const,
-        isLoading: false
-      }));
-      
-      console.log('🎯 [VOTE CONTEXT] === CARGA CON DATOS MOCK COMPLETADA ===');
-      
-    } catch (error: any) {
-      console.error('💥 [VOTE CONTEXT] === ERROR CRÍTICO EN CARGA ===');
-      console.error('💥 [VOTE CONTEXT] Error:', error);
-      console.error('💥 [VOTE CONTEXT] Stack:', error.stack);
-      
-      setError('Error al cargar las votaciones');
-      
-      // Último fallback de emergencia
-      setState(prev => ({
-        ...prev,
-        votes: mockVotes,
-        dataSource: 'mock' as const,
-        isLoading: false
-      }));
+    };
+    
+    initializeAuth();
+  }, []);
+
+  // Inicialización del dark mode
+  useEffect(() => {
+    // Restaurar preferencia de dark mode desde localStorage
+    const savedDarkMode = localStorage.getItem('darkMode');
+    const prefersDark = savedDarkMode === 'true' || 
+      (savedDarkMode === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    
+    setState(prev => ({ ...prev, isDarkMode: prefersDark }));
+    
+    if (prefersDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
     }
+  }, []);
+
+  // ======================================================
+  // API FUNCTIONS (USANDO TU PROPIA API)
+  // ======================================================
+
+  // Función helper para obtener el token de Google ID Token (lo que necesita Sebastian.cl)
+  const getAuthToken = async (user?: User): Promise<string> => {
+    console.log('🎫 [TOKEN] Verificando usuario autenticado...');
+    
+    const currentUser = user || state.user;
+    
+    if (!auth.currentUser || !currentUser) {
+      console.log('❌ [TOKEN] No hay usuario autenticado');
+      throw new Error('Usuario no autenticado');
+    }
+    
+    console.log('👤 [TOKEN] Usuario encontrado:', auth.currentUser.email);
+    
+    // Primero intentar usar el Google ID Token guardado
+    if (currentUser.googleIdToken) {
+      console.log('✅ [TOKEN] Usando Google ID Token guardado (lo que necesita Sebastian.cl)');
+      console.log('🆔 [TOKEN] Google ID Token:', currentUser.googleIdToken.substring(0, 50) + '...');
+      return currentUser.googleIdToken;
+    }
+    
+    // Si no tenemos Google ID Token, usar Firebase como fallback
+    console.log('⚠️ [TOKEN] No hay Google ID Token, usando Firebase Token como fallback');
+    console.log('🔄 [TOKEN] Obteniendo ID Token de Firebase...');
+    
+    const firebaseToken = await auth.currentUser.getIdToken();
+    console.log('✅ [TOKEN] Token de Firebase obtenido:', firebaseToken.substring(0, 50) + '...');
+    
+    return firebaseToken;
   };
 
-  const loadUserVotes = async () => {
-    if (!firebaseAuth.user) return;
+  const loadVoteResults = async (votes: Vote[]) => {
+    console.log('📊 [RESULTS] Cargando resultados de votaciones...');
     
     try {
-      const userVotesData = await getUserVotes(firebaseAuth.user.id);
+      const jwtToken = await getAuthToken();
+      
+      // Cargar resultados para cada encuesta en paralelo
+      const resultsPromises = votes.map(async (vote) => {
+        try {
+          const response = await fetch(`/api/sebastian/vote/v1/vote/${vote.id}/results`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${jwtToken}`,
+              'accept': 'application/json'
+            }
+          });
+          
+          if (response.ok) {
+            const results = await response.json();
+            console.log(`📈 [RESULTS] Resultados para ${vote.title}:`, results);
+            
+            // Actualizar opciones con conteos reales
+            const updatedOptions = vote.options.map(option => {
+              const result = results.results.find((r: any) => r.choice === option.text);
+              return {
+                ...option,
+                votes: result ? result.total : 0
+              };
+            });
+            
+            return { ...vote, options: updatedOptions };
+          } else {
+            console.warn(`⚠️ [RESULTS] No se pudieron cargar resultados para: ${vote.title}`);
+            return vote; // Retornar sin cambios si hay error
+          }
+        } catch (error) {
+          console.warn(`⚠️ [RESULTS] Error cargando resultados para ${vote.title}:`, error);
+          return vote; // Retornar sin cambios si hay error
+        }
+      });
+      
+      const votesWithResults = await Promise.all(resultsPromises);
+      
+      // Actualizar estado con los resultados
       setState(prev => ({
         ...prev,
-        userVotes: userVotesData
+        votes: votesWithResults
       }));
+      
+      console.log('✅ [RESULTS] Resultados cargados para todas las encuestas');
+      
     } catch (error) {
-      console.error('Error cargando votos del usuario:', error);
+      console.error('❌ [RESULTS] Error general cargando resultados:', error);
+      // No hacer nada crítico, las encuestas seguirán funcionando sin conteos
     }
   };
 
-  const login = async (useRedirect = false) => {
+  const loadVotings = async (user?: User) => {
+    console.log('📊 [API] Cargando encuestas desde Sebastian.cl...');
+    
+    setState(prev => ({ ...prev, isLoading: true, error: null }));
+    
     try {
-      await firebaseAuth.signInWithGoogle(useRedirect);
+      const jwtToken = await getAuthToken(user);
+      console.log('🔐 [API] Token JWT obtenido para Sebastian.cl');
+      console.log('📤 [API] Conectando con Sebastian.cl:', jwtToken.substring(0, 60) + '...');
+      console.log('🎫 [API] Tipo de token:', jwtToken.startsWith('ya29') ? 'Google Access Token' : 'Firebase ID Token');
+      console.log('🎫 [API] Token completo para debug:', jwtToken);
+      
+      // Conectar con Sebastian.cl API a través del proxy
+      const response = await fetch('/api/sebastian/vote/v1/polls/', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${jwtToken}`,
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('🌐 [API] Response status:', response.status);
+      console.log('🌐 [API] Response headers:', Object.fromEntries(response.headers.entries()));
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [API] Error response body:', errorText);
+        throw new Error(`Error en API Sebastian.cl: ${response.status} ${response.statusText}`);
+      }
+      
+      const sebastianData = await response.json();
+      console.log('📊 [API] Datos recibidos de Sebastian.cl:', sebastianData.length || 0, 'encuestas');
+      
+      // Transformar datos de Sebastian.cl al formato de la app
+      const transformedVotes: Vote[] = sebastianData
+        .filter((poll: any) => poll.active) // Solo encuestas activas
+        .map((poll: any) => ({
+          id: poll.token,
+          title: poll.name,
+          shortDescription: `Encuesta con ${poll.options?.length || 0} opciones disponibles`,
+          longDescription: poll.name,
+          description: poll.name, // Añadir campo description
+          options: poll.options?.map((option: any) => ({
+            id: option.selection.toString(),
+            text: option.choice,
+            votes: 0 // Se actualizará con los resultados
+          })) || [],
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días desde ahora
+          category: 'Educación', // Todas son de UTEM, categoría educación
+          status: 'active' as const,
+          createdBy: 'Sebastian.cl',
+          imageUrl: undefined
+        }));
+      
+      setState(prev => ({
+        ...prev,
+        votes: transformedVotes,
+        dataSource: 'api',
+        isLoading: false
+      }));
+      
+      console.log('✅ [API] Estado actualizado con encuestas:');
+      console.log('  - Encuestas cargadas:', transformedVotes.length);
+      console.log('  - DataSource:', 'api');
+      console.log('  - IsLoading:', false);
+      console.log('  - Encuestas detalladas:', transformedVotes);
+      console.log('✅ [API] Carga completada -', transformedVotes.length, 'encuestas activas desde Sebastian.cl');
+      
+      // Cargar resultados para todas las encuestas en paralelo
+      await loadVoteResults(transformedVotes);
+      
     } catch (error) {
-      console.error('Error en login:', error);
+      console.error('❌ [API] Error cargando desde Sebastian.cl:', error);
+      setState(prev => ({
+        ...prev,
+        error: `Error conectando con Sebastian.cl: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        isLoading: false,
+        votes: [] // Lista vacía en caso de error
+      }));
+    }
+  };
+
+  // ======================================================
+  // SEBASTIAN.CL API ENDPOINTS
+  // ======================================================
+
+  // ✅ Ya implementado: loadVotings() - GET /v1/polls/
+  // ✅ Ya implementado: submitVote() - POST /v1/vote/election  
+  // ✅ Ya implementado: loadVoteResults() - GET /v1/vote/{pollToken}/results
+
+  const createPoll = async (pollData: {
+    name: string;
+    options: { selection: number; choice: string; }[];
+    token?: string;
+  }) => {
+    try {
+      console.log('🆕 [CREATE_POLL] Creando nueva encuesta...');
+      
+      const jwtToken = await getAuthToken();
+      const requestBody = {
+        token: pollData.token || `poll_${Date.now()}`, // Generar token único si no se proporciona
+        name: pollData.name,
+        options: pollData.options
+      };
+      
+      console.log('📤 [CREATE_POLL] Datos de la encuesta:', requestBody);
+      
+      const response = await fetch('/api/sebastian/vote/v1/polls/', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${jwtToken}`,
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [CREATE_POLL] Error:', response.status, errorText);
+        throw new Error(`Error creando encuesta: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ [CREATE_POLL] Encuesta creada:', result);
+      
+      // Recargar encuestas para mostrar la nueva
+      await loadVotings();
+      
+      return result;
+    } catch (error) {
+      console.error('❌ [CREATE_POLL] Error creando encuesta:', error);
+      throw error;
+    }
+  };
+
+  const updatePoll = async (pollData: {
+    token: string;
+    name: string;
+    active: boolean;
+    options: { selection: number; choice: string; }[];
+  }) => {
+    try {
+      console.log('🔄 [UPDATE_POLL] Actualizando encuesta...');
+      
+      const jwtToken = await getAuthToken();
+      
+      console.log('📤 [UPDATE_POLL] Datos de actualización:', pollData);
+      
+      const response = await fetch('/api/sebastian/vote/v1/polls/', {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${jwtToken}`,
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(pollData)
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [UPDATE_POLL] Error:', response.status, errorText);
+        
+        let errorMessage = `Error actualizando encuesta: ${response.status}`;
+        if (response.status === 500) {
+          try {
+            const errorObj = JSON.parse(errorText);
+            if (errorObj.detail && errorObj.detail.includes('No tiene permiso')) {
+              errorMessage = 'No tienes permisos para actualizar esta encuesta (solo el creador puede modificarla)';
+            }
+          } catch {}
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      const result = await response.json();
+      console.log('✅ [UPDATE_POLL] Encuesta actualizada:', result);
+      
+      // Recargar encuestas para mostrar los cambios
+      await loadVotings();
+      
+      return result;
+    } catch (error) {
+      console.error('❌ [UPDATE_POLL] Error actualizando encuesta:', error);
+      throw error;
+    }
+  };
+
+  const getPollDetails = async (pollToken: string) => {
+    try {
+      console.log('🔍 [GET_POLL] Obteniendo detalles de encuesta...');
+      
+      const jwtToken = await getAuthToken();
+      
+      const response = await fetch(`/api/sebastian/vote/v1/polls/${pollToken}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${jwtToken}`,
+          'accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [GET_POLL] Error:', response.status, errorText);
+        throw new Error(`Error obteniendo encuesta: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('✅ [GET_POLL] Detalles obtenidos:', result);
+      
+      return result;
+    } catch (error) {
+      console.error('❌ [GET_POLL] Error obteniendo encuesta:', error);
+      throw error;
+    }
+  };
+
+  const deletePoll = async (pollToken: string) => {
+    try {
+      console.log('🗑️ [DELETE_POLL] Eliminando encuesta...');
+      
+      const jwtToken = await getAuthToken();
+      
+      const response = await fetch(`/api/sebastian/vote/v1/polls/${pollToken}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${jwtToken}`,
+          'accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [DELETE_POLL] Error:', response.status, errorText);
+        
+        let errorMessage = `Error eliminando encuesta: ${response.status}`;
+        if (response.status === 500) {
+          try {
+            const errorObj = JSON.parse(errorText);
+            if (errorObj.detail && errorObj.detail.includes('No tiene permiso')) {
+              errorMessage = 'No tienes permisos para eliminar esta encuesta (solo el creador puede eliminarla)';
+            }
+          } catch {}
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      const result = await response.json();
+      console.log('✅ [DELETE_POLL] Encuesta eliminada:', result);
+      
+      // Recargar encuestas para reflejar la eliminación
+      await loadVotings();
+      
+      return result;
+    } catch (error) {
+      console.error('❌ [DELETE_POLL] Error eliminando encuesta:', error);
+      throw error;
+    }
+  };
+
+  // ======================================================
+  // CONTEXT ACTIONS (funciones ya existentes)
+  // ======================================================
+
+  const login = async (useRedirect = true) => {
+    try {
+      console.log('🔐 [LOGIN] Iniciando login...');
+      setState(prev => ({ ...prev, isLoading: true, error: null }));
+      
+      const user = await signInWithGoogle(useRedirect);
+      
+      setState(prev => ({
+        ...prev,
+        user,
+        currentScreen: 'voting-list',
+        isLoading: false
+      }));
+      
+      // Cargar votaciones después del login, pasando el usuario
+      await loadVotings(user);
+      
+      console.log('✅ [LOGIN] Login exitoso:', user.name);
+    } catch (error) {
+      console.error('❌ [LOGIN] Error en login:', error);
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Error de autenticación'
+      }));
       throw error;
     }
   };
 
   const logout = async () => {
     try {
-      await firebaseAuth.signOut();
+      console.log('🚪 [LOGOUT] Cerrando sesión...');
+      await signOutFirebase();
+      
       setState(prev => ({
         ...prev,
         currentScreen: 'login',
+        user: null,
         selectedVote: null,
         votes: [],
         userVotes: [],
         searchQuery: '',
-        selectedCategory: 'Todos'
+        selectedCategory: 'Todos',
+        dataSource: 'loading'
       }));
+      
+      console.log('✅ [LOGOUT] Sesión cerrada');
     } catch (error) {
-      console.error('Error en logout:', error);
+      console.error('❌ [LOGOUT] Error en logout:', error);
       throw error;
     }
   };
@@ -432,22 +766,26 @@ export function VoteAppProvider({ children }: { children: ReactNode }) {
   };
 
   const setLoading = (loading: boolean) => {
-    setState(prev => ({
-      ...prev,
-      isLoading: loading
-    }));
+    setState(prev => ({ ...prev, isLoading: loading }));
   };
 
   const setError = (error: string | null) => {
-    setState(prev => ({
-      ...prev,
-      error
-    }));
+    setState(prev => ({ ...prev, error }));
   };
 
   const toggleDarkMode = () => {
-    setState(prev => ({ ...prev, isDarkMode: !prev.isDarkMode }));
-    document.documentElement.classList.toggle('dark');
+    setState(prev => {
+      const newDarkMode = !prev.isDarkMode;
+      // Aplicar/quitar clase dark del elemento HTML
+      if (newDarkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('darkMode', 'true');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('darkMode', 'false');
+      }
+      return { ...prev, isDarkMode: newDarkMode };
+    });
   };
 
   const setSearchQuery = (query: string) => {
@@ -459,44 +797,103 @@ export function VoteAppProvider({ children }: { children: ReactNode }) {
   };
 
   const submitVote = async (voteId: string, optionId: string) => {
-    if (!firebaseAuth.user) {
-      throw new Error('Usuario no autenticado');
-    }
-
-    if (!isFirebaseConfigured()) {
-      // Modo demo: simular voto
-      setState(prev => ({
-        ...prev,
-        votes: prev.votes.map(vote =>
-          vote.id === voteId
-            ? { 
-                ...vote, 
-                userVote: optionId,
-                options: vote.options.map(option =>
-                  option.id === optionId
-                    ? { ...option, votes: option.votes + 1 }
-                    : option
-                ),
-                totalVotes: vote.totalVotes + 1
-              }
-            : vote
-        )
-      }));
-      return;
-    }
-
     try {
-      setLoading(true);
-      await firebaseSubmitVote(firebaseAuth.user.id, voteId, optionId);
+      console.log('🗳️ [VOTE] Enviando voto a Sebastian.cl...');
+      console.log('🗳️ [VOTE] Parámetros recibidos - voteId:', voteId, 'optionId:', optionId);
       
-      // Recargar votos para mostrar la actualización
-      await loadVotes();
-      await loadUserVotes();
+      if (!voteId || !optionId) {
+        throw new Error('Parámetros de voto inválidos');
+      }
+      
+      const jwtToken = await getAuthToken();
+      console.log('🔐 [VOTE] Token JWT listo para Sebastian.cl');
+      console.log('📤 [VOTE] Enviando voto - Token:', jwtToken.substring(0, 60) + '...');
+      console.log('🗳️ [VOTE] Parámetros finales - voteId:', voteId, 'optionId:', optionId);
+      
+      const requestUrl = `/api/sebastian/vote/v1/vote/election`;
+      const requestBody = {
+        pollToken: voteId, // Sebastian.cl espera pollToken, no el ID en la URL
+        selection: parseInt(optionId) // Sebastian.cl espera un número
+      };
+      
+      console.log('📡 [VOTE] URL de solicitud:', requestUrl);
+      console.log('📦 [VOTE] Cuerpo de la solicitud:', JSON.stringify(requestBody));
+      
+      // Enviar voto a Sebastian.cl API a través del proxy
+      const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${jwtToken}`,
+          'accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      console.log('📨 [VOTE] Respuesta recibida - Status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ [VOTE] Error en Sebastian.cl:', response.status, errorText);
+        
+        let errorMessage = `Error enviando voto: ${response.status}`;
+        
+        // Manejar errores específicos
+        if (response.status === 500) {
+          try {
+            const errorObj = JSON.parse(errorText);
+            if (errorObj.detail && errorObj.detail.includes('ya registra un voto')) {
+              errorMessage = 'Ya has votado en esta encuesta anteriormente';
+            } else {
+              errorMessage = errorObj.detail || 'Error interno del servidor';
+            }
+          } catch {
+            errorMessage = 'Ya has votado en esta encuesta o error del servidor';
+          }
+        } else if (response.status === 409) {
+          errorMessage = 'Ya has emitido tu voto en esta encuesta';
+        } else if (response.status === 401) {
+          errorMessage = 'Sesión expirada, por favor inicia sesión nuevamente';
+        } else if (response.status === 404) {
+          errorMessage = 'Encuesta no encontrada o inactiva';
+        }
+        
+        throw new Error(errorMessage);
+      }
+      
+      const result = await response.json();
+      console.log('✅ [VOTE] Voto enviado exitosamente a Sebastian.cl');
+      console.log('📊 [VOTE] Resultado completo:', result);
+      
+      // Registrar el voto localmente para evitar votar de nuevo
+      const userVote = {
+        id: `${voteId}_${state.user?.id}_${Date.now()}`,
+        userId: state.user?.id || '',
+        voteId: voteId,
+        selectedOptionId: optionId,
+        timestamp: new Date()
+      };
+      
+      console.log('📝 [VOTE] Registrando voto localmente:', userVote);
+      
+      setState(prev => {
+        const newState = {
+          ...prev,
+          userVotes: [...prev.userVotes, userVote]
+        };
+        console.log('📊 [VOTE] Nuevo estado de userVotes:', newState.userVotes);
+        return newState;
+      });
+      
+      console.log('✅ [VOTE] Proceso de votación completado exitosamente');
+      
+      // Recargar votaciones para obtener resultados actualizados
+      console.log('🔄 [VOTE] Recargando votaciones...');
+      await loadVotings();
+      
     } catch (error) {
-      console.error('Error al enviar voto:', error);
+      console.error('❌ [VOTE] Error enviando voto a Sebastian.cl:', error);
       throw error;
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -520,7 +917,12 @@ export function VoteAppProvider({ children }: { children: ReactNode }) {
       setSelectedCategory,
       submitVote,
       showSuccess,
-      loadVotes
+      loadVotings,
+      // Nuevas funciones para gestión de encuestas
+      createPoll,
+      updatePoll,
+      getPollDetails,
+      deletePoll
     }}>
       {children}
     </VoteAppContext.Provider>
@@ -534,3 +936,15 @@ export function useVoteApp() {
   }
   return context;
 }
+
+export const getCategoryColor = (category: string) => {
+  const colors: { [key: string]: { bg: string, text: string, border: string } } = {
+    'Gobierno': { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-200 dark:border-blue-700' },
+    'Desarrollo': { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-200 dark:border-purple-700' },
+    'Transporte': { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300', border: 'border-green-200 dark:border-green-700' },
+    'Educación': { bg: 'bg-yellow-100 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-300', border: 'border-yellow-200 dark:border-yellow-700' },
+    'Salud': { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-300', border: 'border-red-200 dark:border-red-700' },
+    'Economía': { bg: 'bg-indigo-100 dark:bg-indigo-900/30', text: 'text-indigo-700 dark:text-indigo-300', border: 'border-indigo-200 dark:border-indigo-700' },
+  };
+  return colors[category] || colors['Gobierno'];
+};

@@ -86,7 +86,7 @@ export function LoginScreen() {
         {/* Ilustración */}
         <div className="flex justify-center">
           <ImageWithFallback
-            src="https://images.unsplash.com/photo-1556745757-8d76bdb6984b?w=300&h=200&fit=crop"
+            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSRphst0fq0WSwzi3QIoau8XcLiXsMFRNg5Bw&s?w=300&h=200&fit="
             alt="Ilustración de votación"
             className="w-72 h-48 object-cover rounded-2xl opacity-80"
           />

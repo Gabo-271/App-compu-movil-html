@@ -5,6 +5,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { VotingListScreen } from './components/VotingListScreen';
 import { VotingDetailScreen } from './components/VotingDetailScreen';
 import { UserProfileScreen } from './components/UserProfileScreen';
+import { PollManagementScreen } from './components/PollManagementScreen';
 import { LoadingScreen, EmptyScreen, SuccessScreen, ErrorScreen } from './components/GlobalStates';
 import { DebugPanel } from './components/DebugPanel';
 
@@ -36,6 +37,9 @@ function VoteAppContent() {
     case 'profile':
       console.log('📱 APP - Renderizando UserProfileScreen');
       return <UserProfileScreen />;
+    case 'poll-management':
+      console.log('📱 APP - Renderizando PollManagementScreen');
+      return <PollManagementScreen />;
     case 'loading':
       console.log('📱 APP - Renderizando LoadingScreen (case loading)');
       return <LoadingScreen />;

@@ -5,7 +5,7 @@ import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar';
 import { useVoteApp, getCategoryColor } from './VoteAppContext';
-import { Search, Filter, Calendar, Users, ChevronRight, Moon, Sun, Building2, Hammer, Bus, GraduationCap, Heart, Briefcase } from 'lucide-react';
+import { Search, Filter, Calendar, Users, ChevronRight, Moon, Sun, Building2, Hammer, Bus, GraduationCap, Heart, Briefcase, Settings } from 'lucide-react';
 
 const categories = ['Todos', 'Gobierno', 'Desarrollo', 'Transporte', 'Educación', 'Salud', 'Economía'];
 
@@ -41,6 +41,20 @@ export function VotingListScreen() {
     return matchesSearch && matchesCategory;
   });
 
+  // Debug logging
+  console.log('🔍 [VOTING_LIST] Estado actual:', {
+    totalVotes: state.votes.length,
+    filteredVotes: filteredVotes.length,
+    searchQuery: state.searchQuery,
+    selectedCategory: state.selectedCategory,
+    dataSource: state.dataSource,
+    isLoading: state.isLoading,
+    error: state.error
+  });
+  
+  console.log('📊 [VOTING_LIST] Encuestas disponibles:', state.votes);
+  console.log('🔎 [VOTING_LIST] Encuestas filtradas:', filteredVotes);
+
   const formatDate = (date: Date | string) => {
     const dateObj = typeof date === 'string' ? new Date(date) : date;
     return dateObj.toLocaleDateString('es-ES', {
@@ -68,6 +82,16 @@ export function VotingListScreen() {
           </div>
           
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigateTo('poll-management')}
+              className="w-8 h-8 p-0"
+              title="Gestionar Encuestas"
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+            
             <Button
               variant="ghost"
               size="sm"

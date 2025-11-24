@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Vote, CheckCircle2, Users, TrendingUp, Sparkles, ArrowRight, BarChart3, Shield, Zap, Heart, ChevronDown } from 'lucide-react';
+import { Vote, CheckCircle2, Users, TrendingUp, Sparkles, ArrowRight, BarChart3, Shield, Zap, Heart, ChevronDown, Moon, Sun } from 'lucide-react';
 import { useVoteApp } from './VoteAppContext';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 
 export function HomePage() {
-  const { navigateTo, state } = useVoteApp();
+  const { navigateTo, state, toggleDarkMode } = useVoteApp();
   const [hoveredFeature, setHoveredFeature] = useState<number | null>(null);
   const [showScrollIndicator, setShowScrollIndicator] = useState(true);
 
@@ -444,6 +444,29 @@ export function HomePage() {
               }}
             >
               <TrendingUp className="size-7 text-white" />
+            </Button>
+          </motion.div>
+        </motion.div>
+
+        <motion.div
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 2.4, type: 'spring', bounce: 0.5 }}
+        >
+          <motion.div
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+          >
+            <Button
+              size="lg"
+              className="rounded-full size-16 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 shadow-2xl p-0"
+              onClick={toggleDarkMode}
+            >
+              {state.isDarkMode ? (
+                <Sun className="size-7 text-white" />
+              ) : (
+                <Moon className="size-7 text-white" />
+              )}
             </Button>
           </motion.div>
         </motion.div>
